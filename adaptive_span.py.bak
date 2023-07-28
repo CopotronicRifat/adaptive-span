@@ -86,7 +86,7 @@ class AdaptiveMask(nn.Module):
 
 
 class AdaptiveSpan(nn.Module):
-    def __init__(self, attn_span, nb_heads, input_size, hidden_size, **kargs):
+    def __init__(self, input_size, hidden_size, attn_span, nb_heads, **kwargs):
         nn.Module.__init__(self)
         self._adapt_cache = adapt_span_cache
         self._max_span = attn_span
