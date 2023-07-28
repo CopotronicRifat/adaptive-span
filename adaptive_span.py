@@ -1,10 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
 #!/usr/bin/env python3
 
 import math
@@ -36,7 +29,7 @@ class AdaptiveMask(nn.Module):
         self.register_buffer('mask_template', mask_template)
 
     def forward(self, x):
-        mask = self.mask_template + self.current_val * self._max_size
+        mask = self.mask_template + self._max_size * self.current_val
         mask = mask / self._ramp_size + 1
         mask = mask.clamp(0, 1)
         if x.size(-1) < self._max_size:
@@ -45,22 +38,8 @@ class AdaptiveMask(nn.Module):
         x = x * mask
         return x
 
-    def get_current_max_size(self, include_ramp=True):
-        current_size = math.ceil(self.current_val.max().item() * self._max_size)
-        if include_ramp:
-            current_size += self._ramp_size
-        current_size = max(0, min(self._max_size, current_size))
-        return current_size
-
-    def get_current_avg_size(self, include_ramp=True):
-        current_size = math.ceil(self.current_val.mean().item() * self._max_size)
-        if include_ramp:
-            current_size += self._ramp_size
-        current_size = max(0, min(self._max_size, current_size))
-        return current_size
-
     def clamp_param(self):
-        """this need to be called after each update"""
+        """this needs to be called after each update"""
         self.current_val.data.clamp_(0, 1)
 
 
@@ -75,7 +54,9 @@ class AdaptiveSpan(nn.Module):
         adapt_span_ramp: length of the masking ramp
         adapt_span_init: initial size ratio
         adapt_span_cache: adapt cache size to reduce memory usage
+        nb_heads: number of attention heads
     """
+
     def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
                  adapt_span_init, adapt_span_cache, nb_heads, **kargs):
         nn.Module.__init__(self)
@@ -84,29 +65,48 @@ class AdaptiveSpan(nn.Module):
         self._loss_coeff = adapt_span_loss
         self._nb_heads = nb_heads
         self._mask = AdaptiveMask(max_size=self._max_span,
-                                 ramp_size=adapt_span_ramp,
-                                 init_val=adapt_span_init,
-                                 shape=(nb_heads, 1, 1))
+                                  ramp_size=adapt_span_ramp,
+                                  init_val=adapt_span_init,
+                                  shape=(nb_heads, 1, 1))
+
+    def calculate_important_scores(self, x):
+        # Calculate important scores for tokens based on the input x.
+        important_scores = torch.mean(x, dim=-1, keepdim=True)
+        return important_scores
+
+    def calculate_dynamic_factors(self, important_scores):
+        # Calculate dynamic factors using the sigmoid activation of current values
+        # and multiplying with important scores.
+        dynamic_factors = torch.sigmoid(self._mask.current_val) * important_scores
+        return dynamic_factors
+
+    def calculate_dynamic_threshold(self, dynamic_factors):
+        # Calculate the dynamic threshold as the maximum value of the dynamic factors.
+        dynamic_threshold = dynamic_factors.max(-1, keepdim=True).values
+        return dynamic_threshold
 
     def forward(self, attn, normalize=True):
         """mask attention with the right span"""
-        # batch and head dimensions are merged together, so separate them first
-        B = attn.size(0) # batch size
-        M = attn.size(1) # block size
-        attn = attn.reshape(B // self._nb_heads, self._nb_heads, M, -1)
+        # Calculate important scores
+        important_scores = self.calculate_important_scores(attn)
 
+        # Calculate dynamic factors and dynamic threshold
+        dynamic_factors = self.calculate_dynamic_factors(important_scores)
+        dynamic_threshold = self.calculate_dynamic_threshold(dynamic_factors)
+
+        # Apply masking using the dynamic threshold and dynamic factors
         attn = self._mask(attn)
+        attn = attn * (important_scores >= dynamic_threshold).unsqueeze(-1).float()
+
         if normalize:
             attn = attn / (attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
-
-        attn = attn.view(B, M, -1)
         return attn
 
     def get_trim_len(self):
         """how much of memory can be trimmed to reduce computation"""
         L = self._max_span
-        trim_len = min(L - 1, L - self._mask.get_current_max_size())
-        # too fine granularity might be bad for the memory management
+        trim_len = min(L - 1, L - self._mask.get_current_max_span())
+        # too fine granularity might be bad for memory management
         trim_len = math.floor(trim_len / 64) * 64
         return trim_len
 
@@ -143,10 +143,10 @@ class AdaptiveSpan(nn.Module):
         return self._loss_coeff * self._max_span * self._mask.current_val.mean()
 
     def get_current_max_span(self):
-        return self._mask.get_current_max_size()
+        return self._mask.current_val.max(-1).values * self._max_span
 
     def get_current_avg_span(self):
-        return self._mask.get_current_avg_size()
+        return self._mask.current_val.mean(-1).values * self._max_span
 
     def clamp_param(self):
         self._mask.clamp_param()
