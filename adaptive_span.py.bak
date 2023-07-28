@@ -32,57 +32,65 @@ class AdaptiveMask(nn.Module):
             self.emb_layers.append(nn.Embedding(r_idx - l_idx, d_emb_i))
             self.emb_projs.append(nn.Linear(d_emb_i, d_proj).weight)
 
-        # dynamic factor and threshold
-        self.dynamic_factor = nn.Parameter(torch.ones(1))
-        self.dynamic_threshold = nn.Parameter(torch.zeros(1))
+        # dynamic factor & threshold
+        self.important_score = nn.Linear(d_embed, 1)
+        self.dynamic_factor = nn.Parameter(torch.ones(1), requires_grad=True)
+        self.threshold = nn.Parameter(torch.zeros(1), requires_grad=True)
 
-    def forward(self, hidden, target):
-        """
-        Input:
-            - `hidden` FloatTensor(shape + (d_proj,))
-            - `target` LongTensor(shape)
-        Output:
-            - `nll` FloatTensor(shape)
-        """
-        assert hidden.shape[-1] == self.d_proj
-        assert hidden.shape[:-1] == target.shape
-        shape = target.shape
-        hidden = hidden.view(-1, self.d_proj)
-        target = target.view(-1)
-
-        # calculate dynamic mask
-        important_score = F.relu(hidden * self.dynamic_factor)
-        important_mask = important_score > self.dynamic_threshold
-
-        # construct weights and biases
-        weights, biases = [], []
-        for i in range(len(self.cutoffs)):
-            weight_i = self.out_layers[i].weight
-            bias_i = self.out_layers[i].bias
-            if i == 0:
-                weight_i = torch.cat([weight_i, self.cluster_proj.weight], dim=0)
-                bias_i = torch.cat([bias_i, self.cluster_proj.bias], dim=0)
-            weights.append(weight_i)
-            biases.append(bias_i)
-
-        # head / cluster assignments
-        head_logit = self._compute_logit(hidden, weights[0], biases[0], self.out_projs[0])
-        head_logprob = F.log_softmax(head_logit.float(), dim=1)
-
-        # final log-probabilities
-        nll = torch.zeros_like(target, dtype=torch.float32, device=hidden.device)
-
-        offset = 0
-        cutoff_values = [0] + self.cutoffs
+    def forward(self, indices):
+        param = self.emb_layers[0].weight.data
+        idx_flat = indices.contiguous().view(-1)
+        emb_flat = torch.zeros([idx_flat.size(0), self.d_proj], dtype=param.dtype, device=param.device)
 
         # for each cluster
-        for i in range(len(cutoff_values) - 1):
+        for i in range(len(self.cutoffs)):
+            # find elements in that cluster
+            l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
+            mask_i = (idx_flat >= l_idx) & (idx_flat < r_idx)
 
-            # select the target tokens in that cluster
-            l_idx, r_idx = cutoff_values[i], cutoff_values[i + 1]
-            mask_i = (target >= l_idx) & (target < r_idx) & important_mask
-            indices_i = mask_i.non
+            # if there are no elements, continue
+            indices_i = mask_i.nonzero().squeeze()
+            if indices_i.numel() == 0:
+                continue
 
+            # add embeddings from this cluster
+            idx_i = idx_flat.index_select(0, indices_i) - l_idx
+            emb_i = self.emb_layers[i](idx_i)
+            emb_i = F.linear(emb_i, self.emb_projs[i])
+            emb_flat = emb_flat.type_as(emb_i) if emb_flat.dtype != emb_i.dtype else emb_flat  # small hack for AMP-O1
+            emb_flat.index_copy_(0, indices_i, emb_i)
+
+        # reshape embeddings
+        embed = emb_flat.view(*indices.size(), self.d_proj)
+
+        # rescale embeddings
+        embed.mul_(self.emb_scale)
+
+        # calculate important scores
+        important_scores = self.important_score(embed).squeeze(-1)
+
+        # calculate dynamic mask
+        dynamic_mask = important_scores > self.dynamic_factor * self.threshold
+
+        return dynamic_mask
+    
+    def get_current_max_size(self, include_ramp=True):
+        current_size = math.ceil(self.current_val.max().item() * self._max_size)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_size, current_size))
+        return current_size
+
+    def get_current_avg_size(self, include_ramp=True):
+        current_size = math.ceil(self.current_val.mean().item() * self._max_size)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_size, current_size))
+        return current_size
+
+    def clamp_param(self):
+        """this need to be called after each update"""
+        self.current_val.data.clamp_(0, 1)
 
 
 class AdaptiveSpan(nn.Module):
@@ -120,6 +128,42 @@ class AdaptiveSpan(nn.Module):
         masked_attn = masked_attn.view(B, M, -1)
 
         return masked_attn
+        
+        def get_trim_len(self):
+        """how much of memory can be trimmed to reduce computation"""
+        L = self._max_span
+        trim_len = min(L - 1, L - self._mask.get_current_max_size())
+        # too fine granularity might be bad for the memory management
+        trim_len = math.floor(trim_len / 64) * 64
+        return trim_len
+
+    def trim_memory(self, query, key, value, key_pe):
+        """trim out unnecessary memory beforehand to reduce computation"""
+        trim_len = self.get_trim_len()
+        cache_size = key.size(1) - query.size(1)
+        trim_len_cache = trim_len - (self._max_span - cache_size)
+        if trim_len_cache > 0:
+            key = key[:, trim_len_cache:, :]
+            value = value[:, trim_len_cache:, :]
+        elif trim_len_cache < 0:
+            # cache is too short! this happens when validation resumes
+            # after a lot of updates.
+            key = F.pad(key, [0, 0, -trim_len_cache, 0])
+            value = F.pad(value, [0, 0, -trim_len_cache, 0])
+        if trim_len > 0:
+            if key_pe is not None:
+                key_pe = key_pe[:, :, trim_len:]
+        return key, value, key_pe
+
+    def get_cache_size(self):
+        """determine how long the cache should be"""
+        if self._adapt_cache:
+            trim_len = self.get_trim_len()
+            # give a buffer of 64 steps since a span might increase
+            # in future updates
+            return min(self._max_span, self._max_span - trim_len + 64)
+        else:
+            return self._max_span
 
     def get_loss(self):
         """a loss term for regularizing the span length"""

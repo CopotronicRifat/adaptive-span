@@ -1,79 +1,50 @@
+# Copyright (c) Facebook, Inc. and its affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the license found in the
+# LICENSE file in the root directory of this source tree.
+#
+
+#!/usr/bin/env python3
+
 import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class AdaptiveMask(nn.Module):
-    """ An adaptive mask module from "Adaptive Input Representations for
-    Neural Language Modeling" (https://arxiv.org/abs/1809.10853) """
-    def __init__(self, n_tokens, d_embed, d_proj, cutoffs, div_val=4):
-        super(AdaptiveMask, self).__init__()
+    """Soft masking function for adaptive size.
+    It masks out the last K values of an input. The masking value
+    goes from 1 to 0 gradually, so K can be learned with
+    back-propagation.
 
-        self.n_tokens = n_tokens
-        self.d_embed = d_embed
-        self.d_proj = d_proj
+    Args:
+        max_size: maximum size (i.e. input dimension)
+        ramp_size: size of the ramp going from 0 to 1
+        init_val: initial size proportion not to be masked out
+        shape: learn multiple sizes independent of each other
+    """
 
-        assert 0 < min(cutoffs) <= max(cutoffs) < n_tokens
-        self.cutoffs = cutoffs + [n_tokens]
-        self.cutoff_ends = [0] + self.cutoffs
-        self.div_val = div_val
-        assert self.div_val > 1
-        assert len(self.cutoffs) > 1
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
+        nn.Module.__init__(self)
+        self._max_size = max_size
+        self._ramp_size = ramp_size
+        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
+        mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
+        self.register_buffer('mask_template', mask_template)
 
-        self.emb_scale = d_proj ** 0.5
+    def forward(self, x):
+        mask = self.mask_template + self.current_val * self._max_size
+        mask = mask / self._ramp_size + 1
+        mask = mask.clamp(0, 1)
+        if x.size(-1) < self._max_size:
+            # the input could have been trimmed beforehand to save computation
+            mask = mask[:, :, -x.size(-1):]
+        x = x * mask
+        return x
 
-        self.emb_layers = nn.ModuleList()
-        self.emb_projs = nn.ParameterList()
-
-        # embedding layers / projections
-        for i in range(len(self.cutoffs)):
-            l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-            d_emb_i = d_embed // (div_val ** i)
-            self.emb_layers.append(nn.Embedding(r_idx - l_idx, d_emb_i))
-            self.emb_projs.append(nn.Linear(d_emb_i, d_proj).weight)
-
-        # dynamic factor & threshold
-        self.important_score = nn.Linear(d_embed, 1)
-        self.dynamic_factor = nn.Parameter(torch.ones(1), requires_grad=True)
-        self.threshold = nn.Parameter(torch.zeros(1), requires_grad=True)
-
-    def forward(self, indices):
-        param = self.emb_layers[0].weight.data
-        idx_flat = indices.contiguous().view(-1)
-        emb_flat = torch.zeros([idx_flat.size(0), self.d_proj], dtype=param.dtype, device=param.device)
-
-        # for each cluster
-        for i in range(len(self.cutoffs)):
-            # find elements in that cluster
-            l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-            mask_i = (idx_flat >= l_idx) & (idx_flat < r_idx)
-
-            # if there are no elements, continue
-            indices_i = mask_i.nonzero().squeeze()
-            if indices_i.numel() == 0:
-                continue
-
-            # add embeddings from this cluster
-            idx_i = idx_flat.index_select(0, indices_i) - l_idx
-            emb_i = self.emb_layers[i](idx_i)
-            emb_i = F.linear(emb_i, self.emb_projs[i])
-            emb_flat = emb_flat.type_as(emb_i) if emb_flat.dtype != emb_i.dtype else emb_flat  # small hack for AMP-O1
-            emb_flat.index_copy_(0, indices_i, emb_i)
-
-        # reshape embeddings
-        embed = emb_flat.view(*indices.size(), self.d_proj)
-
-        # rescale embeddings
-        embed.mul_(self.emb_scale)
-
-        # calculate important scores
-        important_scores = self.important_score(embed).squeeze(-1)
-
-        # calculate dynamic mask
-        dynamic_mask = important_scores > self.dynamic_factor * self.threshold
-
-        return dynamic_mask
-    
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
         if include_ramp:
@@ -94,7 +65,19 @@ class AdaptiveMask(nn.Module):
 
 
 class AdaptiveSpan(nn.Module):
-    def __init__(self, input_size, hidden_size, attn_span, nb_heads, **kwargs):
+    """Adaptive attention span for Transformerself.
+    This module learns an attention span length from data for each
+    self-attention head.
+
+    Args:
+        attn_span: maximum attention span
+        adapt_span_loss: loss coefficient for the span length
+        adapt_span_ramp: length of the masking ramp
+        adapt_span_init: initial size ratio
+        adapt_span_cache: adapt cache size to reduce memory usage
+    """
+    def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
+                 adapt_span_init, adapt_span_cache, nb_heads, **kargs):
         nn.Module.__init__(self)
         self._adapt_cache = adapt_span_cache
         self._max_span = attn_span
@@ -105,31 +88,21 @@ class AdaptiveSpan(nn.Module):
                                  init_val=adapt_span_init,
                                  shape=(nb_heads, 1, 1))
 
-        self.importance_scorer = ImportanceScorer(input_size, hidden_size)
-
     def forward(self, attn, normalize=True):
-        """mask attention with the right span and dynamic threshold"""
-        B = attn.size(0)  # batch size
-        M = attn.size(1)  # block size
+        """mask attention with the right span"""
+        # batch and head dimensions are merged together, so separate them first
+        B = attn.size(0) # batch size
+        M = attn.size(1) # block size
+        attn = attn.reshape(B // self._nb_heads, self._nb_heads, M, -1)
 
-        # Calculate importance scores using the learnable importance scorer
-        importance_scores = self.importance_scorer(attn.view(B * self._nb_heads, M, -1))
-        importance_scores = importance_scores.view(B, self._nb_heads, M)
-
-        dynamic_factor = torch.mean(importance_scores, dim=1, keepdim=True)
-        self._mask.current_val = dynamic_factor
-
-        # Apply dynamic masking based on importance scores
-        masked_attn = self._mask(attn)
-
+        attn = self._mask(attn)
         if normalize:
-            masked_attn = masked_attn / (masked_attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
+            attn = attn / (attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
 
-        masked_attn = masked_attn.view(B, M, -1)
+        attn = attn.view(B, M, -1)
+        return attn
 
-        return masked_attn
-        
-        def get_trim_len(self):
+    def get_trim_len(self):
         """how much of memory can be trimmed to reduce computation"""
         L = self._max_span
         trim_len = min(L - 1, L - self._mask.get_current_max_size())
@@ -177,4 +150,3 @@ class AdaptiveSpan(nn.Module):
 
     def clamp_param(self):
         self._mask.clamp_param()
-
