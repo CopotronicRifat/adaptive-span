@@ -57,15 +57,10 @@ def launch(env_params,
 
     # MODEL
     model = TransformerSeq(
-    adaptive_span=AdaptiveSpan(
-        input_size=256,
-        hidden_size=256,
-        attn_span=1024,
-        nb_heads=4,
-        **kwargs,
-    ),
-)
-
+        vocab_size=data_params['vocab_size'], **model_params,
+        adapt_io_params=adapt_io_params,
+        adapt_span_params=adapt_span_params,
+        pers_mem_params=pers_mem_params)
     if distributed:
         local_rank = env_params['local_rank']
         model = model.to(device)
