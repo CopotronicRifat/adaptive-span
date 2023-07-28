@@ -128,6 +128,8 @@ class AdaptiveSpan(nn.Module):
                 key_pe = key_pe[:, :, trim_len:]
         return key, value, key_pe
 
+
+            
     def get_cache_size(self):
         """determine how long the cache should be"""
         if self._adapt_cache:
@@ -141,12 +143,25 @@ class AdaptiveSpan(nn.Module):
     def get_loss(self):
         """a loss term for regularizing the span length"""
         return self._loss_coeff * self._max_span * self._mask.current_val.mean()
+        
+    def get_loss(self):
+        """a loss term for regularizing the span length"""
+        return self._loss_coeff * self._max_span * self._mask.current_val.mean()
 
-    def get_current_max_span(self):
-        return self._mask.current_val.max(-1).values * self._max_span
+    def get_current_max_span(self, include_ramp=True):
+        current_size = math.ceil(self._mask.current_val.max().item() * self._max_span)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_span, current_size))
+        return current_size
 
-    def get_current_avg_span(self):
-        return self._mask.current_val.mean(-1).values * self._max_span
+
+    def get_current_avg_span(self, include_ramp=True):
+        current_size = math.ceil(self._mask.current_val.mean().item() * self._max_span)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_span, current_size))
+        return current_size
 
     def clamp_param(self):
         self._mask.clamp_param()
