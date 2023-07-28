@@ -67,8 +67,7 @@ class ImportanceScorer(nn.Module):
 
 
 class AdaptiveSpan(nn.Module):
-    def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
-                 adapt_span_init, adapt_span_cache, nb_heads, input_size, hidden_size, **kargs):
+    def __init__(self, attn_span, nb_heads, input_size, hidden_size, **kargs):
         nn.Module.__init__(self)
         self._adapt_cache = adapt_span_cache
         self._max_span = attn_span
@@ -115,3 +114,4 @@ class AdaptiveSpan(nn.Module):
 
     def clamp_param(self):
         self._mask.clamp_param()
+

@@ -1,14 +1,4 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
-#!/usr/bin/env python3
-
 import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -64,20 +54,21 @@ class AdaptiveMask(nn.Module):
         self.current_val.data.clamp_(0, 1)
 
 
-class AdaptiveSpan(nn.Module):
-    """Adaptive attention span for Transformerself.
-    This module learns an attention span length from data for each
-    self-attention head.
+class ImportanceScorer(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(ImportanceScorer, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, 1)
 
-    Args:
-        attn_span: maximum attention span
-        adapt_span_loss: loss coefficient for the span length
-        adapt_span_ramp: length of the masking ramp
-        adapt_span_init: initial size ratio
-        adapt_span_cache: adapt cache size to reduce memory usage
-    """
+    def forward(self, x):
+        x = F.relu(self.fc1(x))
+        importance_scores = torch.sigmoid(self.fc2(x))
+        return importance_scores
+
+
+class AdaptiveSpan(nn.Module):
     def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
-                 adapt_span_init, adapt_span_cache, nb_heads, **kargs):
+                 adapt_span_init, adapt_span_cache, nb_heads, input_size, hidden_size, **kargs):
         nn.Module.__init__(self)
         self._adapt_cache = adapt_span_cache
         self._max_span = attn_span
@@ -88,55 +79,29 @@ class AdaptiveSpan(nn.Module):
                                  init_val=adapt_span_init,
                                  shape=(nb_heads, 1, 1))
 
+        self.importance_scorer = ImportanceScorer(input_size, hidden_size)
+
     def forward(self, attn, normalize=True):
-        """mask attention with the right span"""
-        # batch and head dimensions are merged together, so separate them first
-        B = attn.size(0) # batch size
-        M = attn.size(1) # block size
-        attn = attn.reshape(B // self._nb_heads, self._nb_heads, M, -1)
+        """mask attention with the right span and dynamic threshold"""
+        B = attn.size(0)  # batch size
+        M = attn.size(1)  # block size
 
-        attn = self._mask(attn)
+        # Calculate importance scores using the learnable importance scorer
+        importance_scores = self.importance_scorer(attn.view(B * self._nb_heads, M, -1))
+        importance_scores = importance_scores.view(B, self._nb_heads, M)
+
+        dynamic_factor = torch.mean(importance_scores, dim=1, keepdim=True)
+        self._mask.current_val = dynamic_factor
+
+        # Apply dynamic masking based on importance scores
+        masked_attn = self._mask(attn)
+
         if normalize:
-            attn = attn / (attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
+            masked_attn = masked_attn / (masked_attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
 
-        attn = attn.view(B, M, -1)
-        return attn
+        masked_attn = masked_attn.view(B, M, -1)
 
-    def get_trim_len(self):
-        """how much of memory can be trimmed to reduce computation"""
-        L = self._max_span
-        trim_len = min(L - 1, L - self._mask.get_current_max_size())
-        # too fine granularity might be bad for the memory management
-        trim_len = math.floor(trim_len / 64) * 64
-        return trim_len
-
-    def trim_memory(self, query, key, value, key_pe):
-        """trim out unnecessary memory beforehand to reduce computation"""
-        trim_len = self.get_trim_len()
-        cache_size = key.size(1) - query.size(1)
-        trim_len_cache = trim_len - (self._max_span - cache_size)
-        if trim_len_cache > 0:
-            key = key[:, trim_len_cache:, :]
-            value = value[:, trim_len_cache:, :]
-        elif trim_len_cache < 0:
-            # cache is too short! this happens when validation resumes
-            # after a lot of updates.
-            key = F.pad(key, [0, 0, -trim_len_cache, 0])
-            value = F.pad(value, [0, 0, -trim_len_cache, 0])
-        if trim_len > 0:
-            if key_pe is not None:
-                key_pe = key_pe[:, :, trim_len:]
-        return key, value, key_pe
-
-    def get_cache_size(self):
-        """determine how long the cache should be"""
-        if self._adapt_cache:
-            trim_len = self.get_trim_len()
-            # give a buffer of 64 steps since a span might increase
-            # in future updates
-            return min(self._max_span, self._max_span - trim_len + 64)
-        else:
-            return self._max_span
+        return masked_attn
 
     def get_loss(self):
         """a loss term for regularizing the span length"""
