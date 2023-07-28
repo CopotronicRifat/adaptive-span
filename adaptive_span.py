@@ -3,67 +3,86 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class AdaptiveMask(nn.Module):
-    """Soft masking function for adaptive size.
-    It masks out the last K values of an input. The masking value
-    goes from 1 to 0 gradually, so K can be learned with
-    back-propagation.
+    """ An adaptive mask module from "Adaptive Input Representations for
+    Neural Language Modeling" (https://arxiv.org/abs/1809.10853) """
+    def __init__(self, n_tokens, d_embed, d_proj, cutoffs, div_val=4):
+        super(AdaptiveMask, self).__init__()
 
-    Args:
-        max_size: maximum size (i.e. input dimension)
-        ramp_size: size of the ramp going from 0 to 1
-        init_val: initial size proportion not to be masked out
-        shape: learn multiple sizes independent of each other
-    """
+        self.n_tokens = n_tokens
+        self.d_embed = d_embed
+        self.d_proj = d_proj
 
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
-        nn.Module.__init__(self)
-        self._max_size = max_size
-        self._ramp_size = ramp_size
-        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
-        mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
-        self.register_buffer('mask_template', mask_template)
+        assert 0 < min(cutoffs) <= max(cutoffs) < n_tokens
+        self.cutoffs = cutoffs + [n_tokens]
+        self.cutoff_ends = [0] + self.cutoffs
+        self.div_val = div_val
+        assert self.div_val > 1
+        assert len(self.cutoffs) > 1
 
-    def forward(self, x):
-        mask = self.mask_template + self.current_val * self._max_size
-        mask = mask / self._ramp_size + 1
-        mask = mask.clamp(0, 1)
-        if x.size(-1) < self._max_size:
-            # the input could have been trimmed beforehand to save computation
-            mask = mask[:, :, -x.size(-1):]
-        x = x * mask
-        return x
+        self.emb_scale = d_proj ** 0.5
 
-    def get_current_max_size(self, include_ramp=True):
-        current_size = math.ceil(self.current_val.max().item() * self._max_size)
-        if include_ramp:
-            current_size += self._ramp_size
-        current_size = max(0, min(self._max_size, current_size))
-        return current_size
+        self.emb_layers = nn.ModuleList()
+        self.emb_projs = nn.ParameterList()
 
-    def get_current_avg_size(self, include_ramp=True):
-        current_size = math.ceil(self.current_val.mean().item() * self._max_size)
-        if include_ramp:
-            current_size += self._ramp_size
-        current_size = max(0, min(self._max_size, current_size))
-        return current_size
+        # embedding layers / projections
+        for i in range(len(self.cutoffs)):
+            l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
+            d_emb_i = d_embed // (div_val ** i)
+            self.emb_layers.append(nn.Embedding(r_idx - l_idx, d_emb_i))
+            self.emb_projs.append(nn.Linear(d_emb_i, d_proj).weight)
 
-    def clamp_param(self):
-        """this need to be called after each update"""
-        self.current_val.data.clamp_(0, 1)
+        # dynamic factor and threshold
+        self.dynamic_factor = nn.Parameter(torch.ones(1))
+        self.dynamic_threshold = nn.Parameter(torch.zeros(1))
 
+    def forward(self, hidden, target):
+        """
+        Input:
+            - `hidden` FloatTensor(shape + (d_proj,))
+            - `target` LongTensor(shape)
+        Output:
+            - `nll` FloatTensor(shape)
+        """
+        assert hidden.shape[-1] == self.d_proj
+        assert hidden.shape[:-1] == target.shape
+        shape = target.shape
+        hidden = hidden.view(-1, self.d_proj)
+        target = target.view(-1)
 
-class ImportanceScorer(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(ImportanceScorer, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, 1)
+        # calculate dynamic mask
+        important_score = F.relu(hidden * self.dynamic_factor)
+        important_mask = important_score > self.dynamic_threshold
 
-    def forward(self, x):
-        x = F.relu(self.fc1(x))
-        importance_scores = torch.sigmoid(self.fc2(x))
-        return importance_scores
+        # construct weights and biases
+        weights, biases = [], []
+        for i in range(len(self.cutoffs)):
+            weight_i = self.out_layers[i].weight
+            bias_i = self.out_layers[i].bias
+            if i == 0:
+                weight_i = torch.cat([weight_i, self.cluster_proj.weight], dim=0)
+                bias_i = torch.cat([bias_i, self.cluster_proj.bias], dim=0)
+            weights.append(weight_i)
+            biases.append(bias_i)
+
+        # head / cluster assignments
+        head_logit = self._compute_logit(hidden, weights[0], biases[0], self.out_projs[0])
+        head_logprob = F.log_softmax(head_logit.float(), dim=1)
+
+        # final log-probabilities
+        nll = torch.zeros_like(target, dtype=torch.float32, device=hidden.device)
+
+        offset = 0
+        cutoff_values = [0] + self.cutoffs
+
+        # for each cluster
+        for i in range(len(cutoff_values) - 1):
+
+            # select the target tokens in that cluster
+            l_idx, r_idx = cutoff_values[i], cutoff_values[i + 1]
+            mask_i = (target >= l_idx) & (target < r_idx) & important_mask
+            indices_i = mask_i.non
+
 
 
 class AdaptiveSpan(nn.Module):
