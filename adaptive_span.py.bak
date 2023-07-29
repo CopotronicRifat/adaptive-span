@@ -43,6 +43,7 @@ class AdaptiveMask(nn.Module):
         # Assuming 'x' is a tensor of shape (batch_size, seq_length, token_dim)
         if len(x.size()) == 2:  # If 'x' has 2 dimensions, assume single sequence (batch_size=1)
             x = x.unsqueeze(0)  # Add a batch dimension
+
         batch_size, seq_length, token_dim = x.size()
         
         # Lazy initialization of attention_mlp
@@ -61,6 +62,7 @@ class AdaptiveMask(nn.Module):
         important_scores = F.softmax(attention_scores, dim=-1)
 
         return important_scores
+
         
     def calculate_dynamic_factors(self, important_scores):
         # Calculate dynamic factors as a sigmoid of the important scores
