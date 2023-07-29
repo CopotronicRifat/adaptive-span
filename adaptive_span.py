@@ -88,13 +88,19 @@ class AdaptiveSpan(nn.Module):
         important_scores = torch.mean(x, dim=-1, keepdim=True)
         return important_scores
         
+
         
     def calculate_dynamic_factors(self, important_scores):
-        # Check that the sizes of the tensors match
+
         assert important_scores.size() == self._mask.current_val.size()
 
-        # Calculate the dynamic factors
+
+        important_scores = F.interpolate(important_scores, size=self._mask.current_val.size(), mode='bilinear', align_corners=False)
+
+
         dynamic_factors = torch.sigmoid(self._mask.current_val) * important_scores
+
+    return dynamic_factors
 
         return dynamic_factors
 

@@ -87,11 +87,15 @@ class AdaptiveSpan(nn.Module):
         # Calculate important scores for tokens based on the input x.
         important_scores = torch.mean(x, dim=-1, keepdim=True)
         return important_scores
-
+        
+        
     def calculate_dynamic_factors(self, important_scores):
-        # Calculate dynamic factors using the sigmoid activation of current values
-        # and multiplying with important scores.
+        # Check that the sizes of the tensors match
+        assert important_scores.size() == self._mask.current_val.size()
+
+        # Calculate the dynamic factors
         dynamic_factors = torch.sigmoid(self._mask.current_val) * important_scores
+
         return dynamic_factors
 
     def calculate_dynamic_threshold(self, dynamic_factors):
