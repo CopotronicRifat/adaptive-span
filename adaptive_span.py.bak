@@ -39,6 +39,7 @@ class AdaptiveMask(nn.Module):
             nn.Linear(self.token_dim, self.token_dim // 2),
             nn.ReLU(),
             nn.Linear(self.token_dim // 2, 1)
+            )
             
     def calculate_important_scores(self, x):
         # Assuming 'x' is a tensor of shape (batch_size, seq_length, token_dim)

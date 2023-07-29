@@ -59,7 +59,7 @@ class AdaptiveMask(nn.Module):
 
         return important_scores
         
-        def calculate_dynamic_factors(self, important_scores):
+    def calculate_dynamic_factors(self, important_scores):
         # Calculate dynamic factors as a sigmoid of the important scores
         dynamic_factors = torch.sigmoid(important_scores)
         return dynamic_factors
