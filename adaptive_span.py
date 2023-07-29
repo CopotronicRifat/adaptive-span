@@ -27,15 +27,15 @@ class AdaptiveMask(nn.Module):
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
-
+        
     def forward(self, x):
-        mask = self.mask_template + self._max_size * self.current_val
+        mask = self.mask_template + self.current_val * self._max_size
         mask = mask / self._ramp_size + 1
         mask = mask.clamp(0, 1)
         if x.size(-1) < self._max_size:
             # the input could have been trimmed beforehand to save computation
             mask = mask[:, :, -x.size(-1):]
-        x = x * mask
+        x = x * mask.unsqueeze(-1)  # Broadcast mask to match x's shape
         return x
         
     def get_current_max_size(self, include_ramp=True):
