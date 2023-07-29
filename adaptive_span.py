@@ -27,10 +27,6 @@ class AdaptiveMask(nn.Module):
         shape: learn multiple sizes independent of each other
     """
 
-import torch
-
-class AdaptiveSpan(nn.Module):
-
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
         nn.Module.__init__(self)
         self._max_size = max_size
