@@ -34,27 +34,28 @@ class AdaptiveMask(nn.Module):
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
-        self.token_dim = None  # We will set this during the first forward pass
-        self.attention_mlp = nn.Sequential(
-            nn.Linear(self.token_dim, self.token_dim // 2),
-            nn.ReLU(),
-            nn.Linear(self.token_dim // 2, 1)
-            )
+
+        self.token_dim = None
+        self.attention_mlp = None 
             
+
     def calculate_important_scores(self, x):
         # Assuming 'x' is a tensor of shape (batch_size, seq_length, token_dim)
         batch_size, seq_length, token_dim = x.size()
-        self.token_dim = token_dim  # Update the token_dim attribute for MLP
+        
+        # Lazy initialization of attention_mlp
+        if self.attention_mlp is None:
+            self.token_dim = token_dim  # Update the token_dim attribute for MLP
+            self.attention_mlp = nn.Sequential(
+                nn.Linear(self.token_dim, self.token_dim // 2),
+                nn.ReLU(),
+                nn.Linear(self.token_dim // 2, 1)
+            )
 
-        # Compute self-attention scores using an MLP
-        # Reshape 'x' to (batch_size * seq_length, token_dim) for MLP input
+        # Rest of the calculation remains the same
         x_reshaped = x.view(-1, token_dim)
         attention_scores = self.attention_mlp(x_reshaped)
-
-        # Reshape attention_scores back to (batch_size, seq_length)
         attention_scores = attention_scores.view(batch_size, seq_length)
-
-        # Apply a softmax activation to get importance weights for each token
         important_scores = F.softmax(attention_scores, dim=-1)
 
         return important_scores
