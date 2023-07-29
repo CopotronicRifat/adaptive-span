@@ -119,7 +119,7 @@ class AdaptiveSpan(nn.Module):
     def get_trim_len(self):
         """how much of memory can be trimmed to reduce computation"""
         L = self._max_span
-        trim_len = min(L - 1, L - self._mask.get_current_max_span())
+        trim_len = min(L - 1, L - self._mask.get_current_max_size())
         # too fine granularity might be bad for memory management
         trim_len = math.floor(trim_len / 64) * 64
         return trim_len
