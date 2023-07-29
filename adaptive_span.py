@@ -25,7 +25,7 @@ class AdaptiveMask(nn.Module):
             mask = mask[:, -x.size(-1):]
 
         # Add unsqueeze to apply mask to each element in the batch
-        mask = mask.unsqueeze(1).unsqueeze(2)
+        mask = mask.unsqueeze(1).unsqueeze(1).unsqueeze(1)
 
         x = x * mask  # Element-wise multiplication with broadcasting
 
