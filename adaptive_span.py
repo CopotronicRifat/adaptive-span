@@ -1,10 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
 #!/usr/bin/env python3
 
 import math
@@ -28,7 +21,7 @@ class AdaptiveMask(nn.Module):
     """
 
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
-        nn.Module.__init__(self)
+        super(AdaptiveMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
@@ -40,10 +33,11 @@ class AdaptiveMask(nn.Module):
 
     def calculate_important_scores(self, x):
         """Calculates the important scores for a sequence."""
+        num_dims = x.dim()
+        if num_dims == 2:  # If 'x' has 2 dimensions, assume single sequence (batch_size=1)
+            x = x.unsqueeze(0)  # Add a batch dimension
 
         batch_size, seq_length, token_dim = x.size()
-        if len(x.size()) == 2:  # If 'x' has 2 dimensions, assume single sequence (batch_size=1)
-            x = x.unsqueeze(0)  # Add a batch dimension
 
         # Lazy initialization of attention_mlp
         if self.attention_mlp is None:
@@ -77,7 +71,6 @@ class AdaptiveMask(nn.Module):
         x = x * mask
         return x
 
-
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
         if include_ramp:
@@ -93,7 +86,7 @@ class AdaptiveMask(nn.Module):
         return current_size
 
     def clamp_param(self):
-        """this need to be called after each update"""
+        """This needs to be called after each update."""
         self.current_val.data.clamp_(0, 1)
 
 
@@ -111,7 +104,7 @@ class AdaptiveSpan(nn.Module):
     """
     def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
                  adapt_span_init, adapt_span_cache, nb_heads, **kargs):
-        nn.Module.__init__(self)
+        super(AdaptiveSpan, self).__init__()
         self._adapt_cache = adapt_span_cache
         self._max_span = attn_span
         self._loss_coeff = adapt_span_loss
@@ -122,29 +115,29 @@ class AdaptiveSpan(nn.Module):
                                  shape=(nb_heads, 1, 1))
 
     def forward(self, attn, normalize=True):
-        """mask attention with the right span"""
-        # batch and head dimensions are merged together, so separate them first
-        B = attn.size(0) # batch size
-        M = attn.size(1) # block size
+        """Mask attention with the right span."""
+        # Batch and head dimensions are merged together, so separate them first
+        B = attn.size(0)  # Batch size
+        M = attn.size(1)  # Block size
         attn = attn.reshape(B // self._nb_heads, self._nb_heads, M, -1)
 
         attn = self._mask(attn)
         if normalize:
-            attn = attn / (attn.sum(-1, keepdim=True) + 1e-8)  # normalize so sum is 1
+            attn = attn / (attn.sum(-1, keepdim=True) + 1e-8)  # Normalize so sum is 1
 
         attn = attn.view(B, M, -1)
         return attn
 
     def get_trim_len(self):
-        """how much of memory can be trimmed to reduce computation"""
+        """How much of memory can be trimmed to reduce computation."""
         L = self._max_span
         trim_len = min(L - 1, L - self._mask.get_current_max_size())
-        # too fine granularity might be bad for the memory management
+        # Too fine granularity might be bad for memory management
         trim_len = math.floor(trim_len / 64) * 64
         return trim_len
 
     def trim_memory(self, query, key, value, key_pe):
-        """trim out unnecessary memory beforehand to reduce computation"""
+        """Trim out unnecessary memory beforehand to reduce computation."""
         trim_len = self.get_trim_len()
         cache_size = key.size(1) - query.size(1)
         trim_len_cache = trim_len - (self._max_span - cache_size)
@@ -152,8 +145,7 @@ class AdaptiveSpan(nn.Module):
             key = key[:, trim_len_cache:, :]
             value = value[:, trim_len_cache:, :]
         elif trim_len_cache < 0:
-            # cache is too short! this happens when validation resumes
-            # after a lot of updates.
+            # Cache is too short! This happens when validation resumes after a lot of updates.
             key = F.pad(key, [0, 0, -trim_len_cache, 0])
             value = F.pad(value, [0, 0, -trim_len_cache, 0])
         if trim_len > 0:
@@ -162,11 +154,10 @@ class AdaptiveSpan(nn.Module):
         return key, value, key_pe
 
     def get_cache_size(self):
-        """determine how long the cache should be"""
+        """Determine how long the cache should be."""
         if self._adapt_cache:
             trim_len = self.get_trim_len()
-            # give a buffer of 64 steps since a span might increase
-            # in future updates
+            # Give a buffer of 64 steps since a span might increase in future updates
             return min(self._max_span, self._max_span - trim_len + 64)
         else:
             return self._max_span
