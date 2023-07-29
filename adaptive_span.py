@@ -35,7 +35,7 @@ class AdaptiveMask(nn.Module):
         if x.size(-1) < self._max_size:
             # the input could have been trimmed beforehand to save computation
             mask = mask[:, :, -x.size(-1):]
-        x = x * mask.unsqueeze(1)  # Broadcast mask to match x's shape
+        x = x * mask.unsqueeze(1).unsqueeze(1)  # Broadcast mask to match x's shape
         return x
         
     def get_current_max_size(self, include_ramp=True):
