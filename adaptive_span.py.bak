@@ -14,8 +14,7 @@ class AdaptiveMask(nn.Module):
         self.register_buffer('mask_template', mask_template)
 
     def forward(self, x):
-        batch_size, seq_length, token_dim = x.size()
-        assert token_dim == self._max_size
+        batch_size, seq_length = x.size(0), x.size(1)
 
         mask = self.mask_template + self.current_val * self._max_size
         mask = mask / self._ramp_size + 1
@@ -39,6 +38,7 @@ class AdaptiveMask(nn.Module):
     def clamp_param(self):
         """This needs to be called after each update."""
         self.current_val.data.clamp_(0, 1)
+
 
 
 
