@@ -100,8 +100,6 @@ class AdaptiveSpan(nn.Module):
 
         dynamic_factors = torch.sigmoid(self._mask.current_val) * important_scores
 
-    return dynamic_factors
-
         return dynamic_factors
 
     def calculate_dynamic_threshold(self, dynamic_factors):
