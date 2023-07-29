@@ -13,6 +13,15 @@ class AdaptiveMask(nn.Module):
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
 
+
+    
+    def mask(self, x):
+        mask = self.forward(x)
+        print("x shape:", x.shape)
+        print("mask shape:", mask.shape)
+        x = x * mask  # Element-wise multiplication with broadcasting
+        return x
+        
     def forward(self, x):
         batch_size, seq_length = x.size(0), x.size(1)
 
