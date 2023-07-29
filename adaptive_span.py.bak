@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class AdaptiveMask(nn.Module):
-    def __init__(self, max_size, ramp_size, shape=(1,)):
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
         nn.Module.__init__(self)
         self._max_size = max_size
         self._ramp_size = ramp_size
