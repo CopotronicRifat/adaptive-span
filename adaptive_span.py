@@ -20,13 +20,16 @@ class AdaptiveMask(nn.Module):
         shape: learn multiple sizes independent of each other
     """
 
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
+    def __init__(self, max_span, adapt_span_loss, adapt_span_ramp,
+                 adapt_span_init, adapt_span_cache, nb_heads, **kargs):
         nn.Module.__init__(self)
-        self._max_size = max_size
-        self._ramp_size = ramp_size
-        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
-        mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
-        self.register_buffer('mask_template', mask_template)
+        self._max_span = max_span
+        self._loss_coeff = adapt_span_loss
+        self._nb_heads = nb_heads
+        self._mask = AdaptiveMask(max_size=max_span,
+                                 ramp_size=adapt_span_ramp,
+                                 init_val=adapt_span_init,
+                                 shape=(nb_heads, 1, 1))
 
     def forward(self, x):
         mask = self.mask_template + self.current_val * self._max_size
