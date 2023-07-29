@@ -1,11 +1,7 @@
-#!/usr/bin/env python3
-
 import math
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 
 class AdaptiveMask(nn.Module):
     """Soft masking function for adaptive size.
@@ -66,7 +62,7 @@ class AdaptiveMask(nn.Module):
         mask = mask.clamp(0, 1)
 
         if x.size(-1) < self._max_size:
-            mask = mask[:, :, -x.size(-1):]
+            mask = mask[:, -x.size(-1):]
 
         x = x * mask
         return x

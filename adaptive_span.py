@@ -4,67 +4,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class AdaptiveMask(nn.Module):
-    """Soft masking function for adaptive size.
-    It masks out the last K values of an input. The masking value
-    goes from 1 to 0 gradually, so K can be learned with
-    back-propagation.
-
-    Args:
-        max_size: maximum size (i.e. input dimension)
-        ramp_size: size of the ramp going from 0 to 1
-        init_val: initial size proportion not to be masked out
-        shape: learn multiple sizes independent of each other
-    """
-
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
-        super(AdaptiveMask, self).__init__()
+    def __init__(self, max_size, ramp_size, shape=(1,)):
+        nn.Module.__init__(self)
         self._max_size = max_size
         self._ramp_size = ramp_size
-        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
+        self.current_val = nn.Parameter(torch.zeros(*shape))
+
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
 
-        self.token_dim = None
-        self.attention_mlp = None
-
-    def calculate_important_scores(self, x):
-        """Calculates the important scores for a sequence."""
-        num_dims = x.dim()
-        if num_dims == 2:  # If 'x' has 2 dimensions, assume single sequence (batch_size=1)
-            x = x.unsqueeze(0)  # Add a batch dimension
-
-        batch_size, seq_length, token_dim = x.size()
-
-        # Lazy initialization of attention_mlp
-        if self.attention_mlp is None:
-            self.token_dim = token_dim  # Update the token_dim attribute for MLP
-            self.attention_mlp = nn.Sequential(
-                nn.Linear(self.token_dim, self.token_dim // 2),
-                nn.ReLU(),
-                nn.Linear(self.token_dim // 2, 1)
-            )
-
-        # Rest of the calculation remains the same
-        x_reshaped = x.view(-1, token_dim)
-        attention_scores = self.attention_mlp(x_reshaped)
-        attention_scores = attention_scores.view(batch_size, seq_length)
-        important_scores = F.softmax(attention_scores, dim=-1)
-
-        return important_scores
-
     def forward(self, x):
-        important_scores = self.calculate_important_scores(x)
-        dynamic_factors = torch.sigmoid(important_scores)
-        dynamic_threshold = dynamic_factors.mean()
+        batch_size, seq_length, token_dim = x.size()
+        assert token_dim == self._max_size
 
         mask = self.mask_template + self.current_val * self._max_size
         mask = mask / self._ramp_size + 1
         mask = mask.clamp(0, 1)
 
         if x.size(-1) < self._max_size:
+            # The input could have been trimmed beforehand to save computation
             mask = mask[:, -x.size(-1):]
 
-        x = x * mask
+        x = x * mask.unsqueeze(0)  # Add unsqueeze to apply mask to each element in the batch
+
         return x
 
     def get_current_max_size(self, include_ramp=True):
@@ -74,16 +36,10 @@ class AdaptiveMask(nn.Module):
         current_size = max(0, min(self._max_size, current_size))
         return current_size
 
-    def get_current_avg_size(self, include_ramp=True):
-        current_size = math.ceil(self.current_val.mean().item() * self._max_size)
-        if include_ramp:
-            current_size += self._ramp_size
-        current_size = max(0, min(self._max_size, current_size))
-        return current_size
-
     def clamp_param(self):
         """This needs to be called after each update."""
         self.current_val.data.clamp_(0, 1)
+
 
 
 class AdaptiveSpan(nn.Module):
