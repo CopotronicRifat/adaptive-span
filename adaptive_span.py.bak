@@ -91,14 +91,14 @@ class AdaptiveSpan(nn.Module):
 
         
     def calculate_dynamic_factors(self, important_scores):
+        # Concatenate the important scores and mask tensors
+        combined_tensor = torch.cat((important_scores, self._mask.current_val), dim=1)
 
-        assert important_scores.size() == self._mask.current_val.size()
+        # Resize the combined tensor
+        resized_tensor = F.interpolate(combined_tensor, size=self._mask.current_val.size(), mode='bilinear', align_corners=False)
 
-
-        important_scores = F.interpolate(important_scores, size=self._mask.current_val.size(), mode='bilinear', align_corners=False)
-
-
-        dynamic_factors = torch.sigmoid(self._mask.current_val) * important_scores
+        # Extract the dynamic factors from the resized tensor
+        dynamic_factors = resized_tensor[:, :self._mask.current_val.size(1)]
 
         return dynamic_factors
 
