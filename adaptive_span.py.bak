@@ -37,6 +37,20 @@ class AdaptiveMask(nn.Module):
             mask = mask[:, :, -x.size(-1):]
         x = x * mask
         return x
+        
+    def get_current_max_size(self, include_ramp=True):
+        current_size = math.ceil(self.current_val.max().item() * self._max_size)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_size, current_size))
+        return current_size
+
+    def get_current_avg_size(self, include_ramp=True):
+        current_size = math.ceil(self.current_val.mean().item() * self._max_size)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_size, current_size))
+        return current_size
 
     def clamp_param(self):
         """this needs to be called after each update"""
@@ -140,28 +154,16 @@ class AdaptiveSpan(nn.Module):
         else:
             return self._max_span
 
-    def get_loss(self):
-        """a loss term for regularizing the span length"""
-        return self._loss_coeff * self._max_span * self._mask.current_val.mean()
         
     def get_loss(self):
         """a loss term for regularizing the span length"""
         return self._loss_coeff * self._max_span * self._mask.current_val.mean()
 
-    def get_current_max_span(self, include_ramp=True):
-        current_size = math.ceil(self._mask.current_val.max().item() * self._max_span)
-        if include_ramp:
-            current_size += self._ramp_size
-        current_size = max(0, min(self._max_span, current_size))
-        return current_size
+    def get_current_max_size(self, include_ramp=True):
+        return self._mask.get_current_max_size(include_ramp)
 
-
-    def get_current_avg_span(self, include_ramp=True):
-        current_size = math.ceil(self._mask.current_val.mean().item() * self._max_span)
-        if include_ramp:
-            current_size += self._ramp_size
-        current_size = max(0, min(self._max_span, current_size))
-        return current_size
+    def get_current_avg_size(self, include_ramp=True):
+        return self._mask.get_current_avg_size(include_ramp)
 
     def clamp_param(self):
         self._mask.clamp_param()
