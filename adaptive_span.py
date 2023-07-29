@@ -20,26 +20,27 @@ class AdaptiveMask(nn.Module):
         shape: learn multiple sizes independent of each other
     """
 
-    def __init__(self, max_span, adapt_span_loss, adapt_span_ramp,
-                 adapt_span_init, adapt_span_cache, nb_heads, **kargs):
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
         nn.Module.__init__(self)
-        self._max_span = max_span
-        self._loss_coeff = adapt_span_loss
-        self._nb_heads = nb_heads
-        self._mask = AdaptiveMask(max_size=max_span,
-                                 ramp_size=adapt_span_ramp,
-                                 init_val=adapt_span_init,
-                                 shape=(nb_heads, 1, 1))
+        self._max_size = max_size
+        self._ramp_size = ramp_size
+        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
+        mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
+        self.register_buffer('mask_template', mask_template)
 
     def forward(self, x):
-        mask = self.mask_template + self.current_val * self._max_size
+        mask = self.mask_template + self._max_size * self.current_val
         mask = mask / self._ramp_size + 1
-        important_scores = 1 - mask
-        dynamic_factors = torch.exp(-important_scores)
-        dynamic_threshold = torch.mean(dynamic_factors)
-        mask = mask < dynamic_threshold
+        mask = mask.clamp(0, 1)
+        if x.size(-1) < self._max_size:
+            # the input could have been trimmed beforehand to save computation
+            mask = mask[:, :, -x.size(-1):]
         x = x * mask
         return x
+
+    def clamp_param(self):
+        """this needs to be called after each update"""
+        self.current_val.data.clamp_(0, 1)
 
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
@@ -54,10 +55,6 @@ class AdaptiveMask(nn.Module):
             current_size += self._ramp_size
         current_size = max(0, min(self._max_size, current_size))
         return current_size
-
-    def clamp_param(self):
-        """this need to be called after each update"""
-        self.current_val.data.clamp_(0, 1)
 
 
 class AdaptiveSpan(nn.Module):
@@ -91,10 +88,10 @@ class AdaptiveSpan(nn.Module):
         important_scores = torch.mean(x, dim=-1, keepdim=True)
         return important_scores
 
-
-        
     def calculate_dynamic_factors(self, important_scores):
-        dynamic_factors = torch.sigmoid(self._mask.current_val.unsqueeze(-1)) * important_scores
+        # Calculate dynamic factors using the sigmoid activation of current values
+        # and multiplying with important scores.
+        dynamic_factors = torch.sigmoid(self._mask.current_val) * important_scores
         return dynamic_factors
 
     def calculate_dynamic_threshold(self, dynamic_factors):
@@ -145,8 +142,7 @@ class AdaptiveSpan(nn.Module):
                 key_pe = key_pe[:, :, trim_len:]
         return key, value, key_pe
 
-
-            
+   
     def get_cache_size(self):
         """determine how long the cache should be"""
         if self._adapt_cache:
@@ -157,16 +153,20 @@ class AdaptiveSpan(nn.Module):
         else:
             return self._max_span
 
-        
     def get_loss(self):
         """a loss term for regularizing the span length"""
         return self._loss_coeff * self._max_span * self._mask.current_val.mean()
 
     def get_current_max_size(self, include_ramp=True):
-        return self._mask.get_current_max_size(include_ramp)
+        current_size = math.ceil(self._mask.current_val.max().item() * self._max_span)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_span, current_size))
+        return current_size
 
     def get_current_avg_size(self, include_ramp=True):
-        return self._mask.get_current_avg_size(include_ramp)
-
-    def clamp_param(self):
-        self._mask.clamp_param()
+        current_size = math.ceil(self._mask.current_val.mean().item() * self._max_span)
+        if include_ramp:
+            current_size += self._ramp_size
+        current_size = max(0, min(self._max_span, current_size))
+        return current_size
