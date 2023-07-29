@@ -41,11 +41,10 @@ class AdaptiveMask(nn.Module):
 
     def calculate_important_scores(self, x):
         # Assuming 'x' is a tensor of shape (batch_size, seq_length, token_dim)
+        batch_size, seq_length, token_dim = x.size()
         if len(x.size()) == 2:  # If 'x' has 2 dimensions, assume single sequence (batch_size=1)
             x = x.unsqueeze(0)  # Add a batch dimension
 
-        batch_size, seq_length, token_dim = x.size()
-        
         # Lazy initialization of attention_mlp
         if self.attention_mlp is None:
             self.token_dim = token_dim  # Update the token_dim attribute for MLP

@@ -27,6 +27,10 @@ class AdaptiveMask(nn.Module):
         shape: learn multiple sizes independent of each other
     """
 
+import torch
+
+class AdaptiveSpan(nn.Module):
+
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
         nn.Module.__init__(self)
         self._max_size = max_size
@@ -36,11 +40,11 @@ class AdaptiveMask(nn.Module):
         self.register_buffer('mask_template', mask_template)
 
         self.token_dim = None
-        self.attention_mlp = None 
-            
+        self.attention_mlp = None
 
     def calculate_important_scores(self, x):
-        # Assuming 'x' is a tensor of shape (batch_size, seq_length, token_dim)
+        """Calculates the important scores for a sequence."""
+
         batch_size, seq_length, token_dim = x.size()
         if len(x.size()) == 2:  # If 'x' has 2 dimensions, assume single sequence (batch_size=1)
             x = x.unsqueeze(0)  # Add a batch dimension
@@ -62,34 +66,21 @@ class AdaptiveMask(nn.Module):
 
         return important_scores
 
-        
-    def calculate_dynamic_factors(self, important_scores):
-        # Calculate dynamic factors as a sigmoid of the important scores
-        dynamic_factors = torch.sigmoid(important_scores)
-        return dynamic_factors
-    
-    def calculate_dynamic_threshold(self, dynamic_factors):
-        # Calculate the dynamic threshold as the mean of dynamic factors
-        dynamic_threshold = dynamic_factors.mean()
-        return dynamic_threshold
-    
     def forward(self, x):
         important_scores = self.calculate_important_scores(x)
-        dynamic_factors = self.calculate_dynamic_factors(important_scores)
-        dynamic_threshold = self.calculate_dynamic_threshold(dynamic_factors)
-        
+        dynamic_factors = torch.sigmoid(important_scores)
+        dynamic_threshold = dynamic_factors.mean()
+
         mask = self.mask_template + self.current_val * self._max_size
         mask = mask / self._ramp_size + 1
         mask = mask.clamp(0, 1)
-        
+
         if x.size(-1) < self._max_size:
             mask = mask[:, :, -x.size(-1):]
-        
-        # Apply the dynamic threshold to the mask
-        mask = mask * (dynamic_factors.unsqueeze(-1) > dynamic_threshold).float()
-        
+
         x = x * mask
         return x
+
 
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
