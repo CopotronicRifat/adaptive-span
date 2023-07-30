@@ -14,12 +14,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class AdaptiveMask(nn.Module):
+
 
 import torch
 import torch.nn as nn
 
-class DynamicThresholdMask(nn.Module):
+class AdaptiveMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
         super(DynamicThresholdMask, self).__init__()
         self._max_size = max_size
