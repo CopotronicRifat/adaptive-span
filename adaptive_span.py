@@ -16,23 +16,51 @@ import torch.nn.functional as F
 
 class AdaptiveMask(nn.Module):
 
+import torch
+import torch.nn as nn
+
+class DynamicThresholdMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
-        nn.Module.__init__(self)
+        super(DynamicThresholdMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
 
+    def calculate_important_scores(self, x):
+        # Calculate important scores here (You need to implement this function)
+        # For example, you could use a neural network to calculate important scores
+        important_scores = torch.rand_like(x)  # Placeholder implementation
+        return important_scores
+
+    def calculate_dynamic_factors(self, important_scores):
+        # Calculate dynamic factors here (You need to implement this function)
+        # For example, you could apply some transformations to important scores
+        dynamic_factors = important_scores * 2.0  # Placeholder implementation
+        return dynamic_factors
+
+    def calculate_dynamic_threshold(self, dynamic_factors):
+        # Calculate dynamic threshold here (You need to implement this function)
+        # For example, you could apply some aggregation operation to dynamic factors
+        dynamic_threshold = torch.mean(dynamic_factors)  # Placeholder implementation
+        return dynamic_threshold
+
     def forward(self, x):
+        important_scores = self.calculate_important_scores(x)
+        dynamic_factors = self.calculate_dynamic_factors(important_scores)
+        dynamic_threshold = self.calculate_dynamic_threshold(dynamic_factors)
+
         mask = self.mask_template + self.current_val * self._max_size
         mask = mask / self._ramp_size + 1
         mask = mask.clamp(0, 1)
         if x.size(-1) < self._max_size:
             # the input could have been trimmed beforehand to save computation
             mask = mask[:, :, -x.size(-1):]
+
         x = x * mask
         return x
+
 
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
