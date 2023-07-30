@@ -16,7 +16,7 @@ import torch.nn.functional as F
 
 class AdaptiveMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
-        super(DynamicThresholdMask, self).__init__()
+        super(AdaptiveMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
