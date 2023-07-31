@@ -20,28 +20,48 @@ from transformers import BertTokenizer, BertModel
 
 class AdaptiveMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
-        super(AdaptiveMask, self).__init__()
+        super(DynamicThresholdMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
-        
 
+        # Initialize a random embedding matrix for token embeddings
+        self.token_embeddings = nn.Parameter(torch.randn(100, 300))
+
+        # Initialize the learnable weight matrix for attention scoring
+        self.Wa = nn.Parameter(torch.randn(1, 300))
 
     def calculate_important_scores(self, x):
-        # Tokenization
-        x = x.long()
-        token_ids = x.view(-1)
+        # Tokenization: Split the input sentence x into individual tokens
+        tokens = x.split()
 
-        # Embedding
-        embedding = self.embedding(token_ids)
+        # Embedding: Obtain embeddings for each token
+        embeddings = []
+        for token in tokens:
+            # Get token index (assumed vocabulary size is 100)
+            token_idx = self.get_token_index(token)
+            # Get token embedding from the embedding matrix
+            embedding = self.token_embeddings[token_idx]
+            embeddings.append(embedding)
+        embeddings = torch.stack(embeddings)  # Stack embeddings into a tensor
 
-        # Attention Scoring
-        attention_weights = torch.matmul(embedding, self.attention_weights)
-        attention_scores = F.softmax(attention_weights, dim=-1)
+        # Attention Scoring: Calculate the attention scores for each token
+        # Apply linear transformation using Wa weight matrix
+        attention_weights = torch.matmul(embeddings, self.Wa)
 
-        return attention_scores
+        # Apply softmax to normalize the attention scores
+        attention_weights = F.softmax(attention_weights, dim=0)
+
+        return attention_weights
+
+    def get_token_index(self, token):
+        # A simple function to convert token to its index in the vocabulary
+        # For demonstration purposes, we'll assume a small vocabulary with 100 tokens
+        # In a real scenario, you would have a proper vocabulary and token-to-index mapping.
+        vocab = ["token" + str(i) for i in range(100)]
+        return vocab.index(token)
 
 
     def calculate_dynamic_factors(self, important_scores):

@@ -15,14 +15,7 @@ import torch.nn.functional as F
 
 from transformers import BertTokenizer, BertModel
 
-# Load pre-trained BERT tokenizer and model
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-model = BertModel.from_pretrained('bert-base-uncased')
 
-def get_token_embedding(token):
-    inputs = tokenizer(token, return_tensors="pt")
-    outputs = model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1) 
 
 
 class AdaptiveMask(nn.Module):
@@ -37,20 +30,18 @@ class AdaptiveMask(nn.Module):
 
 
     def calculate_important_scores(self, x):
-        # Assuming x is a tensor representing a batch of tokenized sentences, with shape (batch_size, max_sentence_length)
+        # Tokenization
+        x = x.long()
+        token_ids = x.view(-1)
 
-        # Embedding (you need to have a pre-trained word embedding model)
-        # Assuming you have a function 'get_token_embedding' to get embeddings for tokens
-        embeddings = torch.stack([get_token_embedding(token) for token in x])
+        # Embedding
+        embedding = self.embedding(token_ids)
 
         # Attention Scoring
-        linear_transform = torch.matmul(embeddings, self.Wa)
-        attention_weights = F.softmax(linear_transform, dim=-1)
+        attention_weights = torch.matmul(embedding, self.attention_weights)
+        attention_scores = F.softmax(attention_weights, dim=-1)
 
-        # Calculate the important scores by taking a weighted sum of embeddings using attention weights
-        important_scores = torch.sum(embeddings * attention_weights.unsqueeze(-1), dim=-2)
-
-        return important_scores
+        return attention_scores
 
 
     def calculate_dynamic_factors(self, important_scores):
