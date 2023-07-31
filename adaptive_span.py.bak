@@ -27,7 +27,12 @@ class AdaptiveMask(nn.Module):
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
-        self.embedding_model = embedding_model  # Pass the embedding model instance to the class
+        self.embedding_model = embedding_model
+
+        # Verify that embedding_model is not None and has the required tokenizer attribute
+        if self.embedding_model is None or not hasattr(self.embedding_model, 'tokenizer'):
+            raise ValueError("The embedding_model must be provided and have a tokenizer attribute.")
+
 
     def calculate_important_scores(self, x):
         # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)

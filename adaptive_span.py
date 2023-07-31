@@ -7,63 +7,23 @@ import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 
 
-class PreTrainedBERTEmbedding(nn.Module):
-    def __init__(self, pretrained_model_name):
-        super(PreTrainedBERTEmbedding, self).__init__()
-        self.tokenizer = BertTokenizer.from_pretrained(pretrained_model_name)
-        self.bert_model = BertModel.from_pretrained(pretrained_model_name)
-
-    def forward(self, tokens):
-        input_ids = self.tokenizer(tokens, padding=True, truncation=True, return_tensors='pt')['input_ids']
-        embeddings = self.bert_model(input_ids)[0]
-        return embeddings
-
+import torch
+import torch.nn as nn
 
 class AdaptiveMask(nn.Module):
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), embedding_model=None):
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
         super(AdaptiveMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
-        self.embedding_model = embedding_model
-
-        # Verify that embedding_model is not None and has the required tokenizer attribute
-        if self.embedding_model is None or not hasattr(self.embedding_model, 'tokenizer'):
-            raise ValueError("The embedding_model must be provided and have a tokenizer attribute.")
-
 
     def calculate_important_scores(self, x):
-        # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
-
-        # Tokenization (split sentences into individual tokens)
-        # We use BERT tokenizer instead of the simple split() function
-        tokens_list = [self.embedding_model.tokenizer.tokenize(sentence) for sentence in x]
-
-        embeddings_list = [self.embedding_model(tokens) for tokens in tokens_list]
-
-        # Attention Scoring
-        attention_scores_list = []
-        for embeddings in embeddings_list:
-            # Apply softmax to get attention weights
-            attention_weights = F.softmax(embeddings, dim=-1)
-
-            # Append attention scores to the list
-            attention_scores_list.append(attention_weights)
-
-        # Stack the attention scores back into a tensor
-        attention_scores = torch.stack(attention_scores_list, dim=0)
-
-        return attention_scores
-
-    def get_token_index(self, token):
-        # A simple function to convert token to its index in the vocabulary
-        # For demonstration purposes, we'll assume a small vocabulary with 100 tokens
-        # In a real scenario, you would have a proper vocabulary and token-to-index mapping.
-        vocab = ["token" + str(i) for i in range(100)]
-        return vocab.index(token)
-
+        # Calculate important scores here (You need to implement this function)
+        # For example, you could use a neural network to calculate important scores
+        important_scores = torch.rand_like(x)  # Placeholder implementation
+        return important_scores
 
     def calculate_dynamic_factors(self, important_scores):
         # Calculate dynamic factors here (You need to implement this function)
@@ -91,6 +51,7 @@ class AdaptiveMask(nn.Module):
 
         x = x * mask
         return x
+
 
 
     def get_current_max_size(self, include_ramp=True):
