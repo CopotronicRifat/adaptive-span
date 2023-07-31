@@ -5,23 +5,37 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-
 import torch
 import torch.nn as nn
+import math
 
 class AdaptiveMask(nn.Module):
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), threshold_factor=1.0):
         super(AdaptiveMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
+        self.threshold_factor = threshold_factor
+
+        # Define the linear layer for attention scoring
+        self.attention_linear = nn.Linear(shape[0], 1, bias=False)
 
     def calculate_important_scores(self, x):
-        # Calculate important scores here (You need to implement this function)
-        # For example, you could use a neural network to calculate important scores
-        important_scores = torch.rand_like(x)  # Placeholder implementation
+        # Tokenization: Assuming the input x is a tokenized sequence with embeddings
+        # The input x should have the shape (batch_size, sequence_length, embedding_dim)
+
+        # Attention Weights: Apply a linear transformation to the embeddings and
+        # apply softmax to get attention weights for each token
+        attention_weights = torch.softmax(self.attention_linear(x), dim=1)
+
+        # Dynamic Threshold: Calculate the dynamic threshold based on the attention scores
+        dynamic_threshold = torch.mean(attention_weights, dim=1, keepdim=True) * self.threshold_factor
+
+        # Calculate the importance scores using dynamic thresholding
+        important_scores = (attention_weights > dynamic_threshold).float()
+
         return important_scores
 
     def calculate_dynamic_factors(self, important_scores):
@@ -51,8 +65,6 @@ class AdaptiveMask(nn.Module):
         x = x * mask
         return x
 
-
-
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
         if include_ramp:
@@ -70,6 +82,7 @@ class AdaptiveMask(nn.Module):
     def clamp_param(self):
         """this need to be called after each update"""
         self.current_val.data.clamp_(0, 1)
+
 
 
 class AdaptiveSpan(nn.Module):
