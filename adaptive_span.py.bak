@@ -1,12 +1,3 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-#
-
-#!/usr/bin/env python3
-
 import math
 
 import torch
@@ -27,25 +18,23 @@ class PreTrainedBERTEmbedding(nn.Module):
         embeddings = self.bert_model(input_ids)[0]
         return embeddings
 
+
 class AdaptiveMask(nn.Module):
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), embedding_model=None):
         super(AdaptiveMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
+        self.embedding_model = embedding_model  # Pass the embedding model instance to the class
 
     def calculate_important_scores(self, x):
         # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
 
         # Tokenization (split sentences into individual tokens)
         # We use BERT tokenizer instead of the simple split() function
-        tokens_list = [self.tokenizer.tokenize(sentence) for sentence in x]
-
-        # Embedding using BERT
-        # Initialize the BERT-based token embeddings
-        self.embedding_model = PreTrainedBERTEmbedding('bert-base-uncased')
+        tokens_list = [self.embedding_model.tokenizer.tokenize(sentence) for sentence in x]
 
         embeddings_list = [self.embedding_model(tokens) for tokens in tokens_list]
 
