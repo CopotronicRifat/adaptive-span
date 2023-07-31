@@ -16,7 +16,16 @@ import torch.nn.functional as F
 from transformers import BertTokenizer, BertModel
 
 
+class PreTrainedBERTEmbedding(nn.Module):
+    def __init__(self, pretrained_model_name):
+        super(PreTrainedBERTEmbedding, self).__init__()
+        self.tokenizer = BertTokenizer.from_pretrained(pretrained_model_name)
+        self.bert_model = BertModel.from_pretrained(pretrained_model_name)
 
+    def forward(self, tokens):
+        input_ids = self.tokenizer(tokens, padding=True, truncation=True, return_tensors='pt')['input_ids']
+        embeddings = self.bert_model(input_ids)[0]
+        return embeddings
 
 class AdaptiveMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
@@ -27,34 +36,32 @@ class AdaptiveMask(nn.Module):
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
 
-        # Initialize a random embedding matrix for token embeddings
-        self.token_embeddings = nn.Parameter(torch.randn(100, 300))
-
-        # Initialize the learnable weight matrix for attention scoring
-        self.Wa = nn.Parameter(torch.randn(1, 300))
-
     def calculate_important_scores(self, x):
-        # Tokenization: Split the input sentence x into individual tokens
-        tokens = x.split()
+        # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
 
-        # Embedding: Obtain embeddings for each token
-        embeddings = []
-        for token in tokens:
-            # Get token index (assumed vocabulary size is 100)
-            token_idx = self.get_token_index(token)
-            # Get token embedding from the embedding matrix
-            embedding = self.token_embeddings[token_idx]
-            embeddings.append(embedding)
-        embeddings = torch.stack(embeddings)  # Stack embeddings into a tensor
+        # Tokenization (split sentences into individual tokens)
+        # We use BERT tokenizer instead of the simple split() function
+        tokens_list = [self.tokenizer.tokenize(sentence) for sentence in x]
 
-        # Attention Scoring: Calculate the attention scores for each token
-        # Apply linear transformation using Wa weight matrix
-        attention_weights = torch.matmul(embeddings, self.Wa)
+        # Embedding using BERT
+        # Initialize the BERT-based token embeddings
+        self.embedding_model = PreTrainedBERTEmbedding('bert-base-uncased')
 
-        # Apply softmax to normalize the attention scores
-        attention_weights = F.softmax(attention_weights, dim=0)
+        embeddings_list = [self.embedding_model(tokens) for tokens in tokens_list]
 
-        return attention_weights
+        # Attention Scoring
+        attention_scores_list = []
+        for embeddings in embeddings_list:
+            # Apply softmax to get attention weights
+            attention_weights = F.softmax(embeddings, dim=-1)
+
+            # Append attention scores to the list
+            attention_scores_list.append(attention_weights)
+
+        # Stack the attention scores back into a tensor
+        attention_scores = torch.stack(attention_scores_list, dim=0)
+
+        return attention_scores
 
     def get_token_index(self, token):
         # A simple function to convert token to its index in the vocabulary
