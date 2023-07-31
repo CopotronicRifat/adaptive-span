@@ -23,14 +23,24 @@ class AdaptiveMask(nn.Module):
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class DynamicThresholdMask(nn.Module):
+    # ... (other code remains the same)
+
     def calculate_important_scores(self, x):
         # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
 
-        # Convert the tensor back to a list of sentences (assuming x contains sentence strings)
-        sentences_list = [sentence for sentence in x]
+        # Convert the tensor to a list of strings (assuming x contains sentence strings)
+        sentences_list = [sentence.item().decode() for sentence in x]
 
-        # Tokenization (split sentences into individual tokens)
-        tokens_list = [sentence.split() for sentence in sentences_list]
+        # Tokenization (using torchtext)
+        # Install torchtext: pip install torchtext
+        from torchtext.data.utils import get_tokenizer
+        tokenizer = get_tokenizer('basic_english')
+        tokens_list = [tokenizer(sentence) for sentence in sentences_list]
 
         # Embedding (you need to have a pre-trained word embedding model)
         # Assuming you have a function 'get_token_embedding' to get embeddings for tokens
@@ -55,6 +65,7 @@ class AdaptiveMask(nn.Module):
         important_scores = torch.stack(important_scores_list, dim=0)
 
         return important_scores
+
 
     def calculate_dynamic_factors(self, important_scores):
         # Calculate dynamic factors here (You need to implement this function)

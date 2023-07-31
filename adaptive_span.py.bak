@@ -26,8 +26,11 @@ class AdaptiveMask(nn.Module):
     def calculate_important_scores(self, x):
         # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
 
+        # Convert the tensor back to a list of sentences (assuming x contains sentence strings)
+        sentences_list = [sentence for sentence in x]
+
         # Tokenization (split sentences into individual tokens)
-        tokens_list = [sentence.split() for sentence in x]
+        tokens_list = [sentence.split() for sentence in sentences_list]
 
         # Embedding (you need to have a pre-trained word embedding model)
         # Assuming you have a function 'get_token_embedding' to get embeddings for tokens
