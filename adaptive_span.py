@@ -13,6 +13,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from transformers import BertTokenizer, BertModel
+
+# Load pre-trained BERT tokenizer and model
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+model = BertModel.from_pretrained('bert-base-uncased')
+
+
+
 
 class AdaptiveMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
@@ -22,6 +30,11 @@ class AdaptiveMask(nn.Module):
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
+        
+    def get_token_embedding(token):
+        inputs = tokenizer(token, return_tensors="pt")
+        outputs = model(**inputs)
+        return outputs.last_hidden_state.mean(dim=1) 
 
     def calculate_important_scores(self, x):
         # Assuming x is a tensor representing a batch of tokenized sentences, with shape (batch_size, max_sentence_length)
