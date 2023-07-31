@@ -26,8 +26,8 @@ class AdaptiveMask(nn.Module):
     def calculate_important_scores(self, x):
         # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
 
-        # Convert the tensor to a list of strings (assuming x contains sentence strings)
-        sentences_list = [sentence.item().decode() for sentence in x]
+        # Convert each sentence tensor to a list of strings (assuming x contains sentence strings)
+        sentences_list = [sentence_item.decode() for sentence_item in x]
 
         # Tokenization (using torchtext)
         # Install torchtext: pip install torchtext

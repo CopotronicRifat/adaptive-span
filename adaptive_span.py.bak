@@ -23,13 +23,6 @@ class AdaptiveMask(nn.Module):
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-
-class DynamicThresholdMask(nn.Module):
-    # ... (other code remains the same)
-
     def calculate_important_scores(self, x):
         # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
 
