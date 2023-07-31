@@ -4,11 +4,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from transformers import BertTokenizer, BertModel
-
-
-import torch
-import torch.nn as nn
 
 class AdaptiveMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
