@@ -24,9 +24,33 @@ class AdaptiveMask(nn.Module):
         self.register_buffer('mask_template', mask_template)
 
     def calculate_important_scores(self, x):
-        # Calculate important scores here (You need to implement this function)
-        # For example, you could use a neural network to calculate important scores
-        important_scores = torch.rand_like(x)  # Placeholder implementation
+        # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
+
+        # Tokenization (split sentences into individual tokens)
+        tokens_list = [sentence.split() for sentence in x]
+
+        # Embedding (you need to have a pre-trained word embedding model)
+        # Assuming you have a function 'get_token_embedding' to get embeddings for tokens
+        embeddings_list = [torch.stack([get_token_embedding(token) for token in tokens]) for tokens in tokens_list]
+
+        # Attention Scoring
+        important_scores_list = []
+        for embeddings in embeddings_list:
+            # Apply a linear transformation to embeddings
+            linear_transform = torch.matmul(embeddings, self.Wa)
+
+            # Apply softmax to get attention weights
+            attention_weights = F.softmax(linear_transform, dim=-1)
+
+            # Calculate the important scores by taking a weighted sum of embeddings using attention weights
+            important_scores = torch.sum(embeddings * attention_weights.unsqueeze(-1), dim=-2)
+
+            # Append important scores to the list
+            important_scores_list.append(important_scores)
+
+        # Stack the important scores back into a tensor
+        important_scores = torch.stack(important_scores_list, dim=0)
+
         return important_scores
 
     def calculate_dynamic_factors(self, important_scores):
