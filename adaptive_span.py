@@ -15,33 +15,59 @@ import torch.nn.functional as F
 
 
 class AdaptiveMask(nn.Module):
-    """Soft masking function for adaptive size.
-    It masks out the last K values of an input. The masking value
-    goes from 1 to 0 gradually, so K can be learned with
-    back-propagation.
-
-    Args:
-        max_size: maximum size (i.e. input dimension)
-        ramp_size: size of the ramp going from 0 to 1
-        init_val: initial size proportion not to be masked out
-        shape: learn multiple sizes independent of each other
-    """
-
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
-        nn.Module.__init__(self)
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), threshold_factor=0.5):
+        super(AdaptiveMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
+        self.threshold_factor = threshold_factor
+
+        # Create an embedding layer to represent tokens
+        self.embedding = nn.Embedding(num_embeddings=10000, embedding_dim=64)  # Change num_embeddings as needed
+
+        # Create a linear layer for attention scoring
+        self.attention_linear = nn.Linear(64, 1)
+
+    def calculate_important_scores(self, x):
+        # Tokenization: Split the input sentence into individual tokens
+        tokens = x.split()
+
+        # Embedding: Map tokens to their corresponding embeddings
+        embedded_tokens = self.embedding(torch.tensor([vocab[token] for token in tokens]))  # vocab is a token-to-index mapping
+
+        # Attention Scoring: Calculate attention weights for each token
+        attention_weights = F.softmax(self.attention_linear(embedded_tokens), dim=0)
+
+        return attention_weights
+
+    def calculate_dynamic_factors(self, important_scores):
+        # Dynamic Thresholding: Calculate the dynamic threshold based on attention scores
+        dynamic_threshold = torch.mean(important_scores) * self.threshold_factor
+
+        # Calculate dynamic factors based on whether attention scores are greater than dynamic threshold
+        dynamic_factors = torch.where(important_scores > dynamic_threshold,
+                                      torch.ones_like(important_scores),
+                                      torch.zeros_like(important_scores))
+
+        return dynamic_factors
+
+    def calculate_dynamic_threshold(self, dynamic_factors):
+        # Calculate the dynamic threshold (Note: We already calculate the dynamic threshold in calculate_dynamic_factors)
+        return None
 
     def forward(self, x):
+        important_scores = self.calculate_important_scores(x)
+        dynamic_factors = self.calculate_dynamic_factors(important_scores)
+
         mask = self.mask_template + self.current_val * self._max_size
         mask = mask / self._ramp_size + 1
         mask = mask.clamp(0, 1)
         if x.size(-1) < self._max_size:
             # the input could have been trimmed beforehand to save computation
             mask = mask[:, :, -x.size(-1):]
+
         x = x * mask
         return x
 
