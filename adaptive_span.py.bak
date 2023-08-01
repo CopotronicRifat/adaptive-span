@@ -18,51 +18,43 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class ImportantScoresNetwork(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super(ImportantScoresNetwork, self).__init__()
-        self.model = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim)
-        )
-
-    def forward(self, x):
-        return self.model(x)
+import torch
+import torch.nn as nn
 
 class AdaptiveMask(nn.Module):
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), threshold_factor=0.5):
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), input_size=128, hidden_size=256):
         super(AdaptiveMask, self).__init__()
         self._max_size = max_size
         self._ramp_size = ramp_size
         self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
         mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
         self.register_buffer('mask_template', mask_template)
-        self.threshold_factor = threshold_factor
 
-        # Create a neural network to calculate important scores
-        self.important_scores_net = ImportantScoresNetwork(input_dim=shape[-1], hidden_dim=32, output_dim=1)
+        # Recurrent neural network for important scores calculation
+        self.rnn = nn.RNN(input_size=input_size, hidden_size=hidden_size, batch_first=True)
+        # Linear layer for dynamic factors calculation
+        self.linear = nn.Linear(hidden_size, 1)
 
-        # Create a neural network to calculate dynamic factors
-        self.dynamic_factors_net = ImportantScoresNetwork(input_dim=1, hidden_dim=16, output_dim=1)
-
-    def calculate_important_scores(self, embedded_tokens):
-        # Calculate important scores using the neural network
-        important_scores = self.important_scores_net(embedded_tokens)
+    def calculate_important_scores(self, x):
+        # Use the RNN to get the important scores
+        _, hidden_states = self.rnn(x)
+        # Get the last hidden state as the important scores
+        important_scores = hidden_states[:, -1, :]
         return important_scores
 
     def calculate_dynamic_factors(self, important_scores):
-        # Calculate dynamic factors using the neural network
-        dynamic_factors = important_scores.pow(2)
+        # Apply linear transformation to the important scores to get the dynamic factors
+        dynamic_factors = self.linear(important_scores)
         return dynamic_factors
 
     def calculate_dynamic_threshold(self, dynamic_factors):
-        # Dynamic Thresholding: Calculate the dynamic threshold based on the dynamic factors
-        dynamic_threshold = torch.mean(dynamic_factors) * self.threshold_factor
+        # Calculate dynamic threshold here (You need to implement this function)
+        # For example, you could apply some aggregation operation to dynamic factors
+        dynamic_threshold = torch.mean(dynamic_factors)
         return dynamic_threshold
 
-    def forward(self, x, embedded_tokens):
-        important_scores = self.calculate_important_scores(embedded_tokens)
+    def forward(self, x):
+        important_scores = self.calculate_important_scores(x)
         dynamic_factors = self.calculate_dynamic_factors(important_scores)
         dynamic_threshold = self.calculate_dynamic_threshold(dynamic_factors)
 
@@ -75,6 +67,7 @@ class AdaptiveMask(nn.Module):
 
         x = x * mask
         return x
+
 
 
     def get_current_max_size(self, include_ramp=True):
