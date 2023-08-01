@@ -21,25 +21,78 @@ import torch.nn.functional as F
 import torch
 import torch.nn as nn
 
-class AdaptiveMask(nn.Module):
-    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), input_size=128, hidden_size=256):
-        super(AdaptiveMask, self).__init__()
-        self._max_size = max_size
-        self._ramp_size = ramp_size
-        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
-        mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
-        self.register_buffer('mask_template', mask_template)
+from transformers import BertModel, BertTokenizer
 
-        # Recurrent neural network for important scores calculation
-        self.rnn = nn.RNN(input_size=input_size, hidden_size=hidden_size, batch_first=True)
-        # Linear layer for dynamic factors calculation
-        self.linear = nn.Linear(hidden_size, 1)
+class AdaptiveSpan(nn.Module):
+    def __init__(self, vocab_size, max_sentence_length, bert_model_name):
+        super(AdaptiveSpan, self).__init__()
+        self.vocab_size = vocab_size
+        self.max_sentence_length = max_sentence_length
+
+        # Load pre-trained BERT model and tokenizer
+        self.bert_model = BertModel.from_pretrained(bert_model_name)
+        self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
+
+        # Assuming you have self.Wa initialized for attention scoring
+
+    def get_token_embedding(self, token_indices):
+        """
+        Function to get contextualized embeddings for tokens in a sentence using BERT.
+        
+        Parameters:
+        token_indices (torch.Tensor): A tensor containing indices of tokens in a sentence.
+        
+        Returns:
+        torch.Tensor: Contextualized embeddings for tokens in the sentence.
+        """
+        # Assuming token_indices is a tensor of shape (max_sentence_length,)
+        # Convert token indices to words (using a vocabulary or any other mapping)
+        tokens = [self.vocab[token_idx] for token_idx in token_indices]
+
+        # Convert tokens to BERT input format
+        inputs = self.tokenizer(" ".join(tokens), return_tensors="pt", padding=True, truncation=True)
+
+        # Get BERT embeddings for tokens
+        with torch.no_grad():
+            outputs = self.bert_model(**inputs)
+
+        # Get the last layer hidden states (contextualized embeddings)
+        token_embeddings = outputs.last_hidden_state
+
+        return token_embeddings
 
     def calculate_important_scores(self, x):
-        # Use the RNN to get the important scores
-        _, hidden_states = self.rnn(x)
-        # Get the last hidden state as the important scores
-        important_scores = hidden_states[:, -1, :]
+        # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
+
+        # Tokenization (split sentences into individual tokens)
+        tokens_list = [sentence.split() for sentence in x]
+
+        # Convert tokens into token indices using a vocabulary (for demonstration, we create random token indices)
+        # In a real scenario, you would use a vocabulary and convert words to their corresponding indices.
+        vocab_size = len(self.word_embeddings.weight)
+        token_indices_list = [[torch.randint(vocab_size, size=(self.max_sentence_length,))] for tokens in tokens_list]
+
+        # Embedding (using BERT)
+        embeddings_list = [self.get_token_embedding(token_indices) for token_indices in token_indices_list]
+
+        # Attention Scoring
+        important_scores_list = []
+        for embeddings in embeddings_list:
+            # Apply a linear transformation to embeddings
+            linear_transform = torch.matmul(embeddings, self.Wa)
+
+            # Apply softmax to get attention weights
+            attention_weights = F.softmax(linear_transform, dim=-1)
+
+            # Calculate the important scores by taking a weighted sum of embeddings using attention weights
+            important_scores = torch.sum(embeddings * attention_weights.unsqueeze(-1), dim=-2)
+
+            # Append important scores to the list
+            important_scores_list.append(important_scores)
+
+        # Stack the important scores back into a tensor
+        important_scores = torch.stack(important_scores_list, dim=0)
+
         return important_scores
 
     def calculate_dynamic_factors(self, important_scores):
