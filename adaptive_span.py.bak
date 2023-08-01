@@ -23,9 +23,9 @@ import torch.nn as nn
 
 from transformers import BertModel, BertTokenizer
 
-class AdaptiveSpan(nn.Module):
+class AdaptiveMask(nn.Module):
     def __init__(self, vocab_size, max_sentence_length, bert_model_name):
-        super(AdaptiveSpan, self).__init__()
+        super(AdaptiveMask, self).__init__()
         self.vocab_size = vocab_size
         self.max_sentence_length = max_sentence_length
 
