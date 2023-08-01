@@ -18,14 +18,13 @@ import torch.nn.functional as F
 from transformers import BertModel, BertTokenizer
 
 class AdaptiveMask(nn.Module):
-    def __init__(self, vocab_size, max_sentence_length, bert_model_name):
+    def __init__(self, max_size, ramp_size, init_val, shape):
         super(AdaptiveMask, self).__init__()
-        self.vocab_size = vocab_size
-        self.max_sentence_length = max_sentence_length
+        self._max_size = max_size
+        self._ramp_size = ramp_size
+        self.register_buffer("mask_template", torch.arange(0, self._max_size).float())
+        self.register_buffer("current_val", torch.tensor(init_val).float())
 
-        # Load pre-trained BERT model and tokenizer
-        self.bert_model = BertModel.from_pretrained(bert_model_name)
-        self.tokenizer = BertTokenizer.from_pretrained(bert_model_name)
 
         # Assuming you have self.Wa initialized for attention scoring
 
@@ -149,7 +148,7 @@ class AdaptiveSpan(nn.Module):
         adapt_span_cache: adapt cache size to reduce memory usage
     """
     def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
-                 adapt_span_init, adapt_span_cache, nb_heads, **kargs):
+                 adapt_span_init, adapt_span_cache, nb_heads):
         nn.Module.__init__(self)
         self._adapt_cache = adapt_span_cache
         self._max_span = attn_span
