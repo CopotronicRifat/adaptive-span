@@ -136,17 +136,6 @@ class AdaptiveMask(nn.Module):
 
 
 class AdaptiveSpan(nn.Module):
-    """Adaptive attention span for Transformerself.
-    This module learns an attention span length from data for each
-    self-attention head.
-
-    Args:
-        attn_span: maximum attention span
-        adapt_span_loss: loss coefficient for the span length
-        adapt_span_ramp: length of the masking ramp
-        adapt_span_init: initial size ratio
-        adapt_span_cache: adapt cache size to reduce memory usage
-    """
     def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
                  adapt_span_init, adapt_span_cache, nb_heads):
         nn.Module.__init__(self)
