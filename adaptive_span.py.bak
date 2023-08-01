@@ -135,6 +135,7 @@ class AdaptiveMask(nn.Module):
         self.current_val.data.clamp_(0, 1)
 
 
+
 class AdaptiveSpan(nn.Module):
     def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
                  adapt_span_init, adapt_span_cache, nb_heads):
