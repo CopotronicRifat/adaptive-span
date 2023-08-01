@@ -14,6 +14,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 class ImportantScoresNetwork(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super(ImportantScoresNetwork, self).__init__()
@@ -25,7 +29,6 @@ class ImportantScoresNetwork(nn.Module):
 
     def forward(self, x):
         return self.model(x)
-
 
 class AdaptiveMask(nn.Module):
     def __init__(self, max_size, ramp_size, init_val=0, shape=(1,), threshold_factor=0.5):
@@ -43,13 +46,7 @@ class AdaptiveMask(nn.Module):
         # Create a neural network to calculate dynamic factors
         self.dynamic_factors_net = ImportantScoresNetwork(input_dim=1, hidden_dim=16, output_dim=1)
 
-    def calculate_important_scores(self, x):
-        # Tokenization: Split the input sentence into individual tokens
-        tokens = x.split()
-
-        # Embedding: Map tokens to their corresponding embeddings
-        embedded_tokens = self.embedding(torch.tensor([vocab[token] for token in tokens]))  # vocab is a token-to-index mapping
-
+    def calculate_important_scores(self, embedded_tokens):
         # Calculate important scores using the neural network
         important_scores = self.important_scores_net(embedded_tokens)
         return important_scores
@@ -64,8 +61,8 @@ class AdaptiveMask(nn.Module):
         dynamic_threshold = torch.mean(dynamic_factors) * self.threshold_factor
         return dynamic_threshold
 
-    def forward(self, x):
-        important_scores = self.calculate_important_scores(x)
+    def forward(self, x, embedded_tokens):
+        important_scores = self.calculate_important_scores(embedded_tokens)
         dynamic_factors = self.calculate_dynamic_factors(important_scores)
         dynamic_threshold = self.calculate_dynamic_threshold(dynamic_factors)
 
@@ -78,6 +75,7 @@ class AdaptiveMask(nn.Module):
 
         x = x * mask
         return x
+
 
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
