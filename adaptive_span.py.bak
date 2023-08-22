@@ -149,7 +149,7 @@ class AdaptiveSpan(nn.Module):
                                  init_val=adapt_span_init,
                                  shape=(nb_heads, 1, 1))
                                  
-                                 hello
+
 
     def forward(self, attn, normalize=True):
         """mask attention with the right span"""

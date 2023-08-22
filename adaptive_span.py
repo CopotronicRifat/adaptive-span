@@ -14,107 +14,36 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-
-from transformers import BertModel, BertTokenizer
-
 class AdaptiveMask(nn.Module):
-    def __init__(self, max_size, ramp_size, init_val, shape):
-        super(AdaptiveMask, self).__init__()
+    """Soft masking function for adaptive size.
+    It masks out the last K values of an input. The masking value
+    goes from 1 to 0 gradually, so K can be learned with
+    back-propagation.
+
+    Args:
+        max_size: maximum size (i.e. input dimension)
+        ramp_size: size of the ramp going from 0 to 1
+        init_val: initial size proportion not to be masked out
+        shape: learn multiple sizes independent of each other
+    """
+
+    def __init__(self, max_size, ramp_size, init_val=0, shape=(1,)):
+        nn.Module.__init__(self)
         self._max_size = max_size
         self._ramp_size = ramp_size
-        self.register_buffer("mask_template", torch.arange(0, self._max_size).float())
-        self.register_buffer("current_val", torch.tensor(init_val).float())
-
-
-        # Assuming you have self.Wa initialized for attention scoring
-
-    def get_token_embedding(self, token_indices):
-        """
-        Function to get contextualized embeddings for tokens in a sentence using BERT.
-        
-        Parameters:
-        token_indices (torch.Tensor): A tensor containing indices of tokens in a sentence.
-        
-        Returns:
-        torch.Tensor: Contextualized embeddings for tokens in the sentence.
-        """
-        # Assuming token_indices is a tensor of shape (max_sentence_length,)
-        # Convert token indices to words (using a vocabulary or any other mapping)
-        tokens = [self.vocab[token_idx] for token_idx in token_indices]
-
-        # Convert tokens to BERT input format
-        inputs = self.tokenizer(" ".join(tokens), return_tensors="pt", padding=True, truncation=True)
-
-        # Get BERT embeddings for tokens
-        with torch.no_grad():
-            outputs = self.bert_model(**inputs)
-
-        # Get the last layer hidden states (contextualized embeddings)
-        token_embeddings = outputs.last_hidden_state
-
-        return token_embeddings
-
-    def calculate_important_scores(self, x):
-        # Assuming x is a tensor representing a batch of sentences, with shape (batch_size, max_sentence_length)
-
-        # Tokenization (split sentences into individual tokens)
-        tokens_list = [sentence.split() for sentence in x]
-
-        # Convert tokens into token indices using a vocabulary (for demonstration, we create random token indices)
-        # In a real scenario, you would use a vocabulary and convert words to their corresponding indices.
-        vocab_size = len(self.word_embeddings.weight)
-        token_indices_list = [[torch.randint(vocab_size, size=(self.max_sentence_length,))] for tokens in tokens_list]
-
-        # Embedding (using BERT)
-        embeddings_list = [self.get_token_embedding(token_indices) for token_indices in token_indices_list]
-
-        # Attention Scoring
-        important_scores_list = []
-        for embeddings in embeddings_list:
-            # Apply a linear transformation to embeddings
-            linear_transform = torch.matmul(embeddings, self.Wa)
-
-            # Apply softmax to get attention weights
-            attention_weights = F.softmax(linear_transform, dim=-1)
-
-            # Calculate the important scores by taking a weighted sum of embeddings using attention weights
-            important_scores = torch.sum(embeddings * attention_weights.unsqueeze(-1), dim=-2)
-
-            # Append important scores to the list
-            important_scores_list.append(important_scores)
-
-        # Stack the important scores back into a tensor
-        important_scores = torch.stack(important_scores_list, dim=0)
-
-        return important_scores
-
-    def calculate_dynamic_factors(self, important_scores):
-        # Apply linear transformation to the important scores to get the dynamic factors
-        dynamic_factors = self.linear(important_scores)
-        return dynamic_factors
-
-    def calculate_dynamic_threshold(self, dynamic_factors):
-        # Calculate dynamic threshold here (You need to implement this function)
-        # For example, you could apply some aggregation operation to dynamic factors
-        dynamic_threshold = torch.mean(dynamic_factors)
-        return dynamic_threshold
+        self.current_val = nn.Parameter(torch.zeros(*shape) + init_val)
+        mask_template = torch.linspace(1 - max_size, 0, steps=max_size)
+        self.register_buffer('mask_template', mask_template)
 
     def forward(self, x):
-        important_scores = self.calculate_important_scores(x)
-        dynamic_factors = self.calculate_dynamic_factors(important_scores)
-        dynamic_threshold = self.calculate_dynamic_threshold(dynamic_factors)
-
         mask = self.mask_template + self.current_val * self._max_size
         mask = mask / self._ramp_size + 1
         mask = mask.clamp(0, 1)
         if x.size(-1) < self._max_size:
             # the input could have been trimmed beforehand to save computation
             mask = mask[:, :, -x.size(-1):]
-
         x = x * mask
         return x
-
-
 
     def get_current_max_size(self, include_ramp=True):
         current_size = math.ceil(self.current_val.max().item() * self._max_size)
@@ -135,10 +64,20 @@ class AdaptiveMask(nn.Module):
         self.current_val.data.clamp_(0, 1)
 
 
-
 class AdaptiveSpan(nn.Module):
+    """Adaptive attention span for Transformerself.
+    This module learns an attention span length from data for each
+    self-attention head.
+
+    Args:
+        attn_span: maximum attention span
+        adapt_span_loss: loss coefficient for the span length
+        adapt_span_ramp: length of the masking ramp
+        adapt_span_init: initial size ratio
+        adapt_span_cache: adapt cache size to reduce memory usage
+    """
     def __init__(self, attn_span, adapt_span_loss, adapt_span_ramp,
-                 adapt_span_init, adapt_span_cache, nb_heads):
+                 adapt_span_init, adapt_span_cache, nb_heads, **kargs):
         nn.Module.__init__(self)
         self._adapt_cache = adapt_span_cache
         self._max_span = attn_span
@@ -148,8 +87,6 @@ class AdaptiveSpan(nn.Module):
                                  ramp_size=adapt_span_ramp,
                                  init_val=adapt_span_init,
                                  shape=(nb_heads, 1, 1))
-                                 
-
 
     def forward(self, attn, normalize=True):
         """mask attention with the right span"""
